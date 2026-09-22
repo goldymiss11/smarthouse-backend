@@ -1,0 +1,128 @@
+openapi: 3.0.0
+info:
+  title: SmartHome V2 API
+  description: API для взаимодействия жителей и управляющих компаний с поддержкой ИИ.
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/auth/send-code:
+    post:
+      summary: Отправка SMS-кода
+      responses:
+        '200':
+          description: SMS успешно отправлено (мок)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /api/map/houses:
+    get:
+      summary: Получение статусов домов для глобальной карты
+      responses:
+        '200':
+          description: Список домов и статусов аварий
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    houseId:
+                      type: integer
+                    lat:
+                      type: number
+                    lng:
+                      type: number
+                    water_status:
+                      type: string
+                    electricity_status:
+                      type: string
+
+  /api/bills/{billId}/ai-analysis:
+    get:
+      summary: ИИ-анализ начислений в квитанции
+      parameters:
+        - name: billId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Человекопонятное объяснение начислений
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ai_analysis_summary:
+                    type: string
+
+  /api/v1/profile/privileges:
+    get:
+      summary: Получение списка партнерских офферов с проверкой долгов
+      responses:
+        '200':
+          description: Массив офферов с учетом статуса isLocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  data:
+                    type: object
+                    properties:
+                      offers:
+                        type: array
+                        items:
+                          type: object
+
+  /api/requests/ai-recognize:
+    post:
+      summary: Распознавание проблемы по фото (Gemini ИИ)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image_base64:
+                  type: string
+      responses:
+        '200':
+          description: Распознанная заявка
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api/requests/{id}/status:
+    patch:
+      summary: Изменение статуса заявки модератором УК
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+      responses:
+        '200':
+          description: Статус успешно обновлен

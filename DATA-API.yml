@@ -1,0 +1,33 @@
+version: "1.0"
+team_id: "SmartHome_Team"
+base_url: "http://localhost:8080"
+checks:
+  - method: "GET"
+    endpoint: "/api/v1/profile/privileges"
+    role: "resident"
+    expected_status: [200]
+    expected_format: "application/json"
+    
+  - method: "GET"
+    endpoint: "/api/map/houses"
+    role: "resident"
+    expected_status: [200]
+    expected_format: "application/json"
+    
+  - method: "GET"
+    endpoint: "/api/bills/1/ai-analysis"
+    role: "resident"
+    expected_status: [200]
+    expected_format: "application/json"
+
+  - method: "POST"
+    endpoint: "/api/requests/ai-recognize"
+    role: "resident"
+    expected_status: [200]
+    expected_format: "application/json"
+    
+  - method: "PATCH"
+    endpoint: "/api/requests/1/status"
+    role: "admin"
+    expected_status: [200]
+    expected_format: "application/json"
