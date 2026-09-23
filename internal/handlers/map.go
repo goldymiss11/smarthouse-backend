@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"backend/internal/models"
@@ -20,6 +21,7 @@ func GetMapHousesHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := storage.DB.Query(query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in map: %v", err)
 		return
 	}
 	defer rows.Close()

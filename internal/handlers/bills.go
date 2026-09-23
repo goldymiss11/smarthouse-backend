@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -15,6 +16,7 @@ func GetBillsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := storage.DB.Query("SELECT id, month, amount, is_paid FROM bills WHERE user_id = $1 ORDER BY month DESC", userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in bills: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -37,7 +39,11 @@ func GetBillsHandler(w http.ResponseWriter, r *http.Request) {
 
 func PayBillHandler(w http.ResponseWriter, r *http.Request) {
 	billID := r.PathValue("id")
-	storage.DB.Exec("UPDATE bills SET is_paid = true WHERE id = $1", billID)
+	if _, err := storage.DB.Exec("UPDATE bills SET is_paid = true WHERE id = $1", billID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in pay bill: %v", err)
+		return
+	}
 	
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "paid"})

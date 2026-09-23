@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"backend/internal/bot"
@@ -18,6 +19,7 @@ func GetUKRequestsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := storage.DB.Query("SELECT id, type, title, description, start_date, end_date, status FROM requests WHERE status = $1", status)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in uk requests: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -48,21 +50,29 @@ func GetUKRequestsHandler(w http.ResponseWriter, r *http.Request) {
 // Устарело в пользу UpdateRequestStatusHandler, оставляем для обратной совместимости
 func ApproveRequestHandler(w http.ResponseWriter, r *http.Request) {
 	requestID := r.PathValue("id")
-	storage.DB.Exec("UPDATE requests SET status = 'approved' WHERE id = $1", requestID)
+	if _, err := storage.DB.Exec("UPDATE requests SET status = 'approved' WHERE id = $1", requestID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in approve request update: %v", err)
+		return
+	}
 
 	rows, err := storage.DB.Query("SELECT u.vk_id FROM users u JOIN user_addresses ua ON u.id = ua.user_id WHERE ua.address_id = (SELECT address_id FROM requests WHERE id = $1 LIMIT 1)", requestID)
-	if err == nil {
-		defer rows.Close()
-		var vkIDs []string
-		for rows.Next() {
-			var vkID string
-			if err := rows.Scan(&vkID); err == nil {
-				vkIDs = append(vkIDs, vkID)
-			}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in approve request: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var vkIDs []string
+	for rows.Next() {
+		var vkID string
+		if err := rows.Scan(&vkID); err == nil {
+			vkIDs = append(vkIDs, vkID)
 		}
-		if len(vkIDs) > 0 {
-			bot.SendPushNotification(vkIDs, "Заявка подтверждена УК", requestID)
-		}
+	}
+	if len(vkIDs) > 0 {
+		bot.SendPushNotification(vkIDs, "Заявка подтверждена УК", requestID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -71,7 +81,11 @@ func ApproveRequestHandler(w http.ResponseWriter, r *http.Request) {
 
 // Устарело в пользу UpdateRequestStatusHandler
 func RejectRequestHandler(w http.ResponseWriter, r *http.Request) {
-	storage.DB.Exec("UPDATE requests SET status = 'rejected' WHERE id = $1", r.PathValue("id"))
+	if _, err := storage.DB.Exec("UPDATE requests SET status = 'rejected' WHERE id = $1", r.PathValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in reject request: %v", err)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
 }
@@ -90,19 +104,26 @@ func BroadcastHandler(w http.ResponseWriter, r *http.Request) {
 	var allVkIDs []string
 	for _, addrId := range req.SelectedIds {
 		rows, err := storage.DB.Query("SELECT u.vk_id FROM users u JOIN user_addresses ua ON u.id = ua.user_id WHERE ua.address_id = $1", addrId)
-		if err == nil {
-			for rows.Next() {
-				var vkID string
-				if err := rows.Scan(&vkID); err == nil {
-					allVkIDs = append(allVkIDs, vkID)
-				}
-			}
-			rows.Close()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("DB Error in broadcast: %v", err)
+			return
 		}
+		for rows.Next() {
+			var vkID string
+			if err := rows.Scan(&vkID); err == nil {
+				allVkIDs = append(allVkIDs, vkID)
+			}
+		}
+		rows.Close()
 
 		// Добавляем в ленту
-		storage.DB.Exec("INSERT INTO feed_items (address_id, title, body, category) VALUES ($1, $2, $3, $4)",
-			addrId, "Новое уведомление от УК", req.Text, req.Category)
+		if _, err := storage.DB.Exec("INSERT INTO feed_items (address_id, title, body, category) VALUES ($1, $2, $3, $4)",
+			addrId, "Новое уведомление от УК", req.Text, req.Category); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("DB Error in broadcast insert: %v", err)
+			return
+		}
 	}
 
 	if len(allVkIDs) > 0 {
@@ -128,6 +149,7 @@ func GetUKObjectsHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := storage.DB.Query(query)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in uk objects: %v", err)
 		return
 	}
 	defer rows.Close()

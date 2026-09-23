@@ -1,10 +1,12 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
-	"backend/internal/storage"
 	"database/sql"
+	"encoding/json"
+	"log"
+	"net/http"
+
+	"backend/internal/storage"
 )
 
 func LoginHandler(w http.ResponseWriter, r *http.Request) {
@@ -18,10 +20,17 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	var role string
 	err := storage.DB.QueryRow("SELECT id, role FROM users WHERE vk_id = $1", req.VkID).Scan(&userID, &role)
 	
-	if err == sql.ErrNoRows {
-		err = storage.DB.QueryRow("INSERT INTO users (vk_id, role) VALUES ($1, 'resident') RETURNING id, role", req.VkID).Scan(&userID, &role)
-		if err != nil {
+	if err != nil {
+		if err == sql.ErrNoRows {
+			err = storage.DB.QueryRow("INSERT INTO users (vk_id, role) VALUES ($1, 'resident') RETURNING id, role", req.VkID).Scan(&userID, &role)
+			if err != nil {
+				http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+				log.Printf("DB Error in login insert: %v", err)
+				return
+			}
+		} else {
 			http.Error(w, "DB error: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("DB Error in login select: %v", err)
 			return
 		}
 	}
@@ -49,6 +58,7 @@ func LinkAddressHandler(w http.ResponseWriter, r *http.Request) {
 		
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in link address: %v", err)
 		return
 	}
 

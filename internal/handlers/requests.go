@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"backend/internal/bot"
@@ -22,6 +23,7 @@ func UpdateRequestStatusHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := storage.DB.Exec("UPDATE requests SET status = $1 WHERE id = $2", req.Status, requestID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in requests update: %v", err)
 		return
 	}
 
@@ -33,19 +35,23 @@ func UpdateRequestStatusHandler(w http.ResponseWriter, r *http.Request) {
 		WHERE ua.address_id = (SELECT address_id FROM requests WHERE id = $1 LIMIT 1)
 	`
 	rows, err := storage.DB.Query(query, requestID)
-	if err == nil {
-		defer rows.Close()
-		var vkIDs []string
-		for rows.Next() {
-			var vkID string
-			if err := rows.Scan(&vkID); err == nil {
-				vkIDs = append(vkIDs, vkID)
-			}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in requests: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	var vkIDs []string
+	for rows.Next() {
+		var vkID string
+		if err := rows.Scan(&vkID); err == nil {
+			vkIDs = append(vkIDs, vkID)
 		}
-		if len(vkIDs) > 0 {
-			msg := "Статус заявки изменен на: " + req.Status
-			bot.SendPushNotification(vkIDs, msg, requestID)
-		}
+	}
+	if len(vkIDs) > 0 {
+		msg := "Статус заявки изменен на: " + req.Status
+		bot.SendPushNotification(vkIDs, msg, requestID)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

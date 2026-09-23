@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -23,6 +24,7 @@ func GetFeedHandler(w http.ResponseWriter, r *http.Request) {
 	rows, err := storage.DB.Query(query, userID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in resident feed: %v", err)
 		return
 	}
 	defer rows.Close()
@@ -74,6 +76,7 @@ func PostMetersHandler(w http.ResponseWriter, r *http.Request) {
 	_, err := storage.DB.Exec("INSERT INTO meters (user_id, water, electricity) VALUES ($1, $2, $3)", userID, req.Water, req.Electricity)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in post meters: %v", err)
 		return
 	}
 
@@ -113,6 +116,7 @@ func CreateRequestHandler(w http.ResponseWriter, r *http.Request) {
 	err := storage.DB.QueryRow("SELECT address_id FROM user_addresses WHERE user_id = $1 LIMIT 1", userID).Scan(&addressID)
 	if err != nil {
 		http.Error(w, "User address not found: "+err.Error(), http.StatusBadRequest)
+		log.Printf("DB Error in user address lookup: %v", err)
 		return
 	}
 
@@ -123,6 +127,7 @@ func CreateRequestHandler(w http.ResponseWriter, r *http.Request) {
 		
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("DB Error in create request: %v", err)
 		return
 	}
 

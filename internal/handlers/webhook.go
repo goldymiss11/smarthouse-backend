@@ -1,7 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"log"
 	"net/http"
 	"strings"
 
@@ -16,8 +19,12 @@ type WebhookRequest struct {
 }
 
 func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewBuffer(body))
+	log.Printf("МАХ WEBHOOK RAW: %s", string(body))
+
 	var req WebhookRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -43,14 +50,18 @@ func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	// Сценарий В: Умный QA по району
 	} else {
 		rows, err := storage.DB.Query("SELECT title, description, status FROM requests WHERE status != 'resolved' AND status != 'rejected'")
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			log.Printf("DB Error in webhook: %v", err)
+			return
+		}
+		defer rows.Close()
+
 		var activeIssues []string
-		if err == nil {
-			defer rows.Close()
-			for rows.Next() {
-				var title, desc, status string
-				if err := rows.Scan(&title, &desc, &status); err == nil {
-					activeIssues = append(activeIssues, title + " (" + status + "): " + desc)
-				}
+		for rows.Next() {
+			var title, desc, status string
+			if err := rows.Scan(&title, &desc, &status); err == nil {
+				activeIssues = append(activeIssues, title + " (" + status + "): " + desc)
 			}
 		}
 		
