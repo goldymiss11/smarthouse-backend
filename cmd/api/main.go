@@ -39,7 +39,7 @@ func enableCORS(next http.Handler) http.Handler {
 
 func main() {
 	// Загружаем ENV. В докере переменные будут прокинуты напрямую.
-	godotenv.Load("../../.env")
+	godotenv.Load(".env", "../.env", "../../.env", "backend/.env")
 
 	dbURL := os.Getenv("DB_URL")
 	if dbURL == "" {

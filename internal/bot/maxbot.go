@@ -24,11 +24,12 @@ func SendReplyMessage(userID interface{}, message string) error {
 	apiURL := "https://platform-api2.max.ru/messages"
 
 	payload := map[string]interface{}{
-		"user_id": userID,
-		"chat_id": userID,
-		"users":   []interface{}{userID},
-		"message": message,
-		"text":    message,
+		"recipient": map[string]interface{}{
+			"chat_id": userID,
+		},
+		"message": map[string]interface{}{
+			"text": message,
+		},
 	}
 
 	body, err := json.Marshal(payload)

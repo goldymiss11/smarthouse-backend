@@ -6,8 +6,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"backend/internal/ai"
 	"backend/internal/bot"
@@ -40,10 +42,26 @@ func toInt(v interface{}) int {
 	}
 }
 
+func parseChatID(val interface{}) interface{} {
+	switch v := val.(type) {
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	default:
+		return val
+	}
+}
+
 func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 	log.Printf("МАХ WEBHOOK RAW: %s", string(body))
+
+	var rawMap map[string]interface{}
+	json.Unmarshal(body, &rawMap)
 
 	var req WebhookRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -51,29 +69,80 @@ func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.UserID == 0 && req.ChatID != 0 {
-		req.UserID = req.ChatID
+	// Извлекаем chat_id и текст сообщения из входящего вебхука
+	var chatID interface{}
+	if req.ChatID != 0 {
+		chatID = req.ChatID
+	} else if req.UserID != 0 {
+		chatID = req.UserID
 	}
-	if req.UserID == 0 {
-		var rawMap map[string]interface{}
-		if err := json.Unmarshal(body, &rawMap); err == nil {
-			if uid, ok := rawMap["user_id"]; ok {
-				req.UserID = toInt(uid)
-			} else if cid, ok := rawMap["chat_id"]; ok {
-				req.UserID = toInt(cid)
-			} else if uObj, ok := rawMap["user"].(map[string]interface{}); ok {
-				if id, ok := uObj["id"]; ok {
-					req.UserID = toInt(id)
+
+	if chatID == nil || chatID == 0 {
+		if cid, ok := rawMap["chat_id"]; ok && cid != nil {
+			chatID = cid
+		} else if uid, ok := rawMap["user_id"]; ok && uid != nil {
+			chatID = uid
+		} else if recObj, ok := rawMap["recipient"].(map[string]interface{}); ok {
+			if id, ok := recObj["chat_id"]; ok {
+				chatID = id
+			}
+		} else if chatObj, ok := rawMap["chat"].(map[string]interface{}); ok {
+			if id, ok := chatObj["id"]; ok {
+				chatID = id
+			} else if id, ok := chatObj["chatId"]; ok {
+				chatID = id
+			} else if id, ok := chatObj["chat_id"]; ok {
+				chatID = id
+			}
+		} else if fromObj, ok := rawMap["from"].(map[string]interface{}); ok {
+			if id, ok := fromObj["id"]; ok {
+				chatID = id
+			} else if id, ok := fromObj["userId"]; ok {
+				chatID = id
+			}
+		} else if payloadObj, ok := rawMap["payload"].(map[string]interface{}); ok {
+			if chatObj, ok := payloadObj["chat"].(map[string]interface{}); ok {
+				if id, ok := chatObj["id"]; ok {
+					chatID = id
+				} else if id, ok := chatObj["chatId"]; ok {
+					chatID = id
 				}
-			} else if fObj, ok := rawMap["from"].(map[string]interface{}); ok {
-				if id, ok := fObj["id"]; ok {
-					req.UserID = toInt(id)
+			} else if fromObj, ok := payloadObj["from"].(map[string]interface{}); ok {
+				if id, ok := fromObj["id"]; ok {
+					chatID = id
+				} else if id, ok := fromObj["userId"]; ok {
+					chatID = id
 				}
 			}
 		}
 	}
-	if req.Message == "" && req.Text != "" {
-		req.Message = req.Text
+
+	if chatID != nil {
+		chatID = parseChatID(chatID)
+	}
+
+	if req.UserID == 0 && chatID != nil {
+		req.UserID = toInt(chatID)
+	}
+
+	if req.Message == "" {
+		if req.Text != "" {
+			req.Message = req.Text
+		} else if txt, ok := rawMap["text"].(string); ok && txt != "" {
+			req.Message = txt
+		} else if msgObj, ok := rawMap["message"].(map[string]interface{}); ok {
+			if txt, ok := msgObj["text"].(string); ok && txt != "" {
+				req.Message = txt
+			}
+		} else if payloadObj, ok := rawMap["payload"].(map[string]interface{}); ok {
+			if txt, ok := payloadObj["text"].(string); ok && txt != "" {
+				req.Message = txt
+			} else if msgObj, ok := payloadObj["message"].(map[string]interface{}); ok {
+				if txt, ok := msgObj["text"].(string); ok && txt != "" {
+					req.Message = txt
+				}
+			}
+		}
 	}
 
 	var reply string
@@ -154,9 +223,52 @@ func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		reply = replyText
 	}
 
-	// Отправка исходящего HTTP POST-запроса на API МАХ (https://platform-api2.max.ru/messages)
-	if err := bot.SendReplyMessage(req.UserID, reply); err != nil {
-		log.Printf("Error sending message to MAX API: %v", err)
+	// 1-4. Исходящий HTTP POST-запрос на API МАХ (https://platform-api2.max.ru/messages)
+	maxToken := os.Getenv("MAX_TOKEN")
+	if maxToken == "" {
+		maxToken = os.Getenv("MAX_BOT_TOKEN")
+	}
+
+	if maxToken == "" {
+		log.Println("WARNING: MAX_TOKEN is empty, cannot send message to MAX API")
+	} else {
+		outgoingPayload := map[string]interface{}{
+			"recipient": map[string]interface{}{
+				"chat_id": chatID,
+			},
+			"message": map[string]interface{}{
+				"text": reply,
+			},
+		}
+
+		reqBytes, err := json.Marshal(outgoingPayload)
+		if err != nil {
+			log.Printf("Error marshaling MAX API payload: %v", err)
+		} else {
+			postReq, err := http.NewRequest("POST", "https://platform-api2.max.ru/messages", bytes.NewBuffer(reqBytes))
+			if err != nil {
+				log.Printf("Error creating HTTP request to MAX API: %v", err)
+			} else {
+				authHeader := "Bearer " + strings.TrimPrefix(maxToken, "Bearer ")
+				postReq.Header.Set("Authorization", authHeader)
+				postReq.Header.Set("Content-Type", "application/json")
+
+				log.Printf("OUTGOING TO MAX API: url=https://platform-api2.max.ru/messages, body=%s", string(reqBytes))
+
+				client := &http.Client{Timeout: 10 * time.Second}
+				resp, err := client.Do(postReq)
+				if err != nil {
+					log.Printf("Error sending HTTP POST to MAX API: %v", err)
+				} else {
+					defer resp.Body.Close()
+					respBody, _ := io.ReadAll(resp.Body)
+					log.Printf("MAX API RESPONSE: status=%d, body=%s", resp.StatusCode, string(respBody))
+					if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+						log.Printf("MAX API returned non-OK status: %d, response: %s", resp.StatusCode, string(respBody))
+					}
+				}
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
