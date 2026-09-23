@@ -101,6 +101,10 @@ func BroadcastHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len([]rune(req.Category)) > 30 {
+		req.Category = string([]rune(req.Category)[:30])
+	}
+
 	var allVkIDs []string
 	for _, addrId := range req.SelectedIds {
 		rows, err := storage.DB.Query("SELECT u.vk_id FROM users u JOIN user_addresses ua ON u.id = ua.user_id WHERE ua.address_id = $1", addrId)

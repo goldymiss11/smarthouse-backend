@@ -111,6 +111,26 @@ func CreateRequestHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Обрезаем поля VARCHAR до 30 символов перед выполнением SQL-запроса
+	if len([]rune(req.Type)) > 30 {
+		req.Type = string([]rune(req.Type)[:30])
+	}
+	if len([]rune(req.Title)) > 30 {
+		req.Title = string([]rune(req.Title)[:30])
+	}
+	if len([]rune(req.StartDate)) > 30 {
+		req.StartDate = string([]rune(req.StartDate)[:30])
+	}
+	if len([]rune(req.EndDate)) > 30 {
+		req.EndDate = string([]rune(req.EndDate)[:30])
+	}
+	if req.Status == "" {
+		req.Status = "pending"
+	}
+	if len([]rune(req.Status)) > 20 {
+		req.Status = string([]rune(req.Status)[:20])
+	}
+
 	// Находим адрес пользователя
 	var addressID int
 	err := storage.DB.QueryRow("SELECT address_id FROM user_addresses WHERE user_id = $1 LIMIT 1", userID).Scan(&addressID)
@@ -122,8 +142,8 @@ func CreateRequestHandler(w http.ResponseWriter, r *http.Request) {
 
 	_, err = storage.DB.Exec(`
 		INSERT INTO requests (user_id, address_id, type, title, description, start_date, end_date, status) 
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-		userID, addressID, req.Type, req.Title, req.Description, req.StartDate, req.EndDate)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		userID, addressID, req.Type, req.Title, req.Description, req.StartDate, req.EndDate, req.Status)
 		
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

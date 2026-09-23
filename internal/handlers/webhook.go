@@ -6,16 +6,38 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backend/internal/ai"
+	"backend/internal/bot"
+	"backend/internal/models"
 	"backend/internal/storage"
 )
 
 type WebhookRequest struct {
-	UserID  int    `json:"user_id"`
-	Message string `json:"message"`
-	Image   string `json:"image_base64"`
+	UserID   int    `json:"user_id"`
+	ChatID   int    `json:"chat_id"`
+	Message  string `json:"message"`
+	Text     string `json:"text"`
+	Image    string `json:"image_base64"`
+}
+
+func toInt(v interface{}) int {
+	switch val := v.(type) {
+	case float64:
+		return int(val)
+	case int:
+		return val
+	case string:
+		n, _ := strconv.Atoi(val)
+		return n
+	case json.Number:
+		n, _ := val.Int64()
+		return int(n)
+	default:
+		return 0
+	}
 }
 
 func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
@@ -29,17 +51,74 @@ func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.UserID == 0 && req.ChatID != 0 {
+		req.UserID = req.ChatID
+	}
+	if req.UserID == 0 {
+		var rawMap map[string]interface{}
+		if err := json.Unmarshal(body, &rawMap); err == nil {
+			if uid, ok := rawMap["user_id"]; ok {
+				req.UserID = toInt(uid)
+			} else if cid, ok := rawMap["chat_id"]; ok {
+				req.UserID = toInt(cid)
+			} else if uObj, ok := rawMap["user"].(map[string]interface{}); ok {
+				if id, ok := uObj["id"]; ok {
+					req.UserID = toInt(id)
+				}
+			} else if fObj, ok := rawMap["from"].(map[string]interface{}); ok {
+				if id, ok := fObj["id"]; ok {
+					req.UserID = toInt(id)
+				}
+			}
+		}
+	}
+	if req.Message == "" && req.Text != "" {
+		req.Message = req.Text
+	}
+
 	var reply string
 
 	// Сценарий А: Фото объявления
 	if req.Image != "" && !strings.Contains(strings.ToLower(req.Message), "счет") {
-		result, _ := ai.ParseAnnouncement(req.Image)
+		result, err := ai.ParseAnnouncement(req.Image)
+		if err != nil || result == nil {
+			result = &models.Request{
+				Type:        "other",
+				Title:       "Распознано ИИ",
+				Description: "Заявка по фото объявления",
+				StartDate:   "",
+				EndDate:     "",
+			}
+		}
+
+		// Обрезаем поля VARCHAR до 30 символов перед выполнением SQL-запроса
+		if len([]rune(result.Type)) > 30 {
+			result.Type = string([]rune(result.Type)[:30])
+		}
+		if len([]rune(result.Title)) > 30 {
+			result.Title = string([]rune(result.Title)[:30])
+		}
+		if len([]rune(result.StartDate)) > 30 {
+			result.StartDate = string([]rune(result.StartDate)[:30])
+		}
+		if len([]rune(result.EndDate)) > 30 {
+			result.EndDate = string([]rune(result.EndDate)[:30])
+		}
+		if result.Status == "" {
+			result.Status = "pending"
+		}
+		if len([]rune(result.Status)) > 20 {
+			result.Status = string([]rune(result.Status)[:20])
+		}
 		
 		var addressID int
 		storage.DB.QueryRow("SELECT address_id FROM user_addresses WHERE user_id = $1 LIMIT 1", req.UserID).Scan(&addressID)
 		
-		storage.DB.Exec(`INSERT INTO requests (user_id, address_id, type, title, description, start_date, end_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')`,
-			req.UserID, addressID, result.Type, result.Title, result.Description, result.StartDate, result.EndDate)
+		_, err = storage.DB.Exec(`INSERT INTO requests (user_id, address_id, type, title, description, start_date, end_date, status) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			req.UserID, addressID, result.Type, result.Title, result.Description, result.StartDate, result.EndDate, result.Status)
+		if err != nil {
+			log.Printf("DB Error in webhook insert request: %v", err)
+		}
 			
 		reply = "Заявка сформирована и отправлена в УК. Статус доступен в мини-приложении."
 
@@ -73,6 +152,11 @@ func MaxWebhookHandler(w http.ResponseWriter, r *http.Request) {
 		
 		replyText, _ := ai.AskLLM(prompt)
 		reply = replyText
+	}
+
+	// Отправка исходящего HTTP POST-запроса на API МАХ (https://platform-api2.max.ru/messages)
+	if err := bot.SendReplyMessage(req.UserID, reply); err != nil {
+		log.Printf("Error sending message to MAX API: %v", err)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
